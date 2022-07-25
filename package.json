@@ -1,0 +1,123 @@
+{
+  "name": "@msamblanet/node-pg-rev",
+  "version": "0.1.1",
+  "description": "Node utility library for the node-pg system",
+  "author": "Michael Samblanet <michael@samblanet.com>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/msamblanet/node-pg-rev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/msamblanet/node-pg-rev/issues"
+  },
+  "homepage": "https://github.com/msamblanet/node-pg-rev#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+"scripts": {
+    "applyProjectTemplate": "applyProjectTemplate",
+    "build": "npm run build:clean && npm run build:gen",
+    "build:check": "tsc --noEmit",
+    "build:clean": "del-cli dist",
+    "build:gen": "tsc",
+    "lib:check": "ncu",
+    "lib:unused": "npx depcheck",
+    "lib:update:doctor": "ncu --doctor -u -t latest",
+    "lib:update:latest": "ncu -u -t latest && npm install",
+    "lib:update:minor": "ncu -u -t minor && npm install",
+    "lib:update:patch": "ncu -u -t patch && npm install",
+    "lint": "xo",
+    "lint:fix": "xo --fix",
+    "prepack": "npm run lint && npm run build:check && npm run build",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:debug": "node --inspect --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:open": "opener \"./coverage/lcov-report/index.html\"",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js -- watch"
+  },
+  "dependencies": {
+    "it-batch": "^1.0.9",
+    "ms": "^2.1.3",
+    "pg": "^8.7.3",
+    "pg-query-stream": "^4.2.3"
+  },
+  "devDependencies": {
+    "@msamblanet/node-project-template": "^0.7.2",
+    "npm-check-updates": "^16.0.0",
+    "xo": "^0.51.0",
+    "depcheck": "^1.4.3",
+    "@types/ms": "^0.7.31",
+    "@types/pg": "^8.6.5"
+  },
+  "engines": {
+    "node": ">=18.3.0"
+  },
+  "xo": {
+    "rules": {
+      "comma-dangle": "off",
+      "max-depth": [ "error", {  "max": 6 } ],
+      "object-curly-spacing": [
+        "error",
+        "always"
+      ],
+      "@typescript-eslint/comma-dangle": "off",
+      "@typescript-eslint/object-curly-spacing": [
+        "error",
+        "always"
+      ],
+      "@typescript-eslint/naming-convention": "off",
+      "unicorn/filename-case": [
+        "error",
+        {
+          "cases": {
+            "camelCase": true,
+            "pascalCase": true
+          }
+        }
+      ],
+      "capitalized-comments": "off",
+      "@typescript-eslint/class-literal-property-style": [
+        "error",
+        "fields"
+      ]
+    },
+    "space": 2,
+    "parserOptions": {
+      "project": "./tsconfig.json"
+    }
+  },
+  "jest": {
+    "collectCoverage": true,
+    "collectCoverageFrom": [
+      "<rootDir>/src/**/*.{ts,js}"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageThreshold": {
+      "global": {
+        "branches": 0,
+        "functions": 0,
+        "lines": 0,
+        "statements": 0
+      }
+    },
+    "globals": {
+      "ts-jest": {
+        "useESM": true
+      }
+    },
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "preset": "ts-jest/presets/default-esm",
+    "testEnvironment": "node",
+    "testPathIgnorePatterns": [
+      "<rootDir>/node_modules/",
+      "<rootDir>/dist/"
+    ],
+    "testRegex": "/test/.*\\.test\\.(?:js|ts)",
+    "verbose": false
+  }
+}
