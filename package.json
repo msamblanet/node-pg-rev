@@ -1,6 +1,6 @@
 {
   "name": "@msamblanet/node-pg-rev",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Node utility library for the node-pg system",
   "author": "Michael Samblanet <michael@samblanet.com>",
   "license": "Apache-2.0",
