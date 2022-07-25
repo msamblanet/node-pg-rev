@@ -1,9 +1,11 @@
+import { Readable } from 'node:stream';
 import batch from 'it-batch';
 import ms from 'ms';
-import Stream from 'pg-query-stream';
 import pg from 'pg';
-import { poolStream } from './Util.js';
+import { withStream, poolStreamQuery } from './Util.js';
 import { IdResult, ProcessBatchResults, RawLoadRecord, RawLoadResults, RawTrimResults, RevLoadResults, RevTrimResults, UpdatedTrimResults } from './Types.js';
+
+export type TypedReadable<X> = Readable; // Add type to Readable for better documentation
 
 export interface RevLoaderConfig {
   typeName: string; // The type name in the DB - include any namespaceing
@@ -60,15 +62,15 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
       this.log.timeLog(logName, 'Loading updated');
       const updatedStart = new Date();
       const updated: ProcessBatchResults = { modified: 0, records: 0 };
-      const updateIterator = await (full ? this.querySourceFull(this.config.updateLimit) : await this.querySourceDelta(this.config.updateLimit, threshold));
-      await this.processBatch(updateIterator, updatedStart, updated);
+      const updatedStream = await (full ? this.querySourceFull(this.config.updateLimit) : await this.querySourceDelta(this.config.updateLimit, threshold));
+      await withStream(updatedStream, async updatedStream => this.processBatch(updatedStream, updatedStart, updated));
       this.log.timeLog(logName, 'Updated Results', updated);
 
       this.log.timeLog(logName, 'Refresh outdated');
       const outdatedStart = new Date();
       const outdated: ProcessBatchResults = { modified: 0, records: 0 };
-      const outdatedIterator = await this.queryOutdated(this.config.outdatedLimit);
-      await this.processBatch(outdatedIterator, outdatedStart, outdated);
+      const outdatedStream = await this.queryOutdated(this.config.outdatedLimit);
+      await withStream(outdatedStream, async outdatedStream => this.processBatch(outdatedStream, outdatedStart, outdated));
       this.log.timeLog(logName, 'Outdated Results', outdated);
 
       let rawTrimResults: RawTrimResults = { raw_trim_count: 0 };
@@ -139,7 +141,7 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return qr.rows[0].rv as Date | undefined;
   }
 
-  protected async processBatch(dataIterator: AsyncIterable<SOURCE_TYPE>, defaultFetchDate: Date, counts?: ProcessBatchResults): Promise<void> {
+  protected async processBatch(dataIterator: TypedReadable<SOURCE_TYPE>, defaultFetchDate: Date, counts?: ProcessBatchResults): Promise<void> {
     counts ??= { modified: 0, records: 0 };
 
     const logInterval = setInterval(() => {
@@ -180,10 +182,9 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
        LIMIT ${limit}`;
   }
 
-  protected async queryOutdatedIds(useUid = true, limit = this.config.outdatedLimit): Promise<AsyncIterable<IdResult<ID_TYPE>>> {
+  protected async queryOutdatedIds(useUid = true, limit = this.config.outdatedLimit): Promise<TypedReadable<IdResult<ID_TYPE>>> {
     const sql = this.buildOutdatedIdsQuery(useUid, limit);
-    const pgStream = new Stream(sql);
-    return poolStream(this.revPool, pgStream);
+    return poolStreamQuery(this.revPool, sql);
   }
 
   protected async rawTrim(startDate: Date): Promise<RawTrimResults> {
@@ -244,14 +245,14 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return { updated_trim_count: 0 };
   }
 
-  protected async querySourceDelta(limit: number, _threshold?: Date): Promise<AsyncIterable<SOURCE_TYPE>> {
+  protected async querySourceDelta(limit: number, _threshold?: Date): Promise<TypedReadable<SOURCE_TYPE>> {
     // Default implementation that defers to a full load
     this.log.timeLog(this.config.typeName, 'Delta not supported - performing full load');
     return this.querySourceFull(limit);
   }
 
-  protected abstract querySourceFull(limit: number): Promise<AsyncIterable<SOURCE_TYPE>>;
-  protected abstract queryOutdated(limit: number): Promise<AsyncIterable<SOURCE_TYPE>>;
+  protected abstract querySourceFull(limit: number): Promise<TypedReadable<SOURCE_TYPE>>;
+  protected abstract queryOutdated(limit: number): Promise<TypedReadable<SOURCE_TYPE>>;
   protected abstract transformRecords(data: SOURCE_TYPE[], defaultFetchDate: Date): Promise<Array<RawLoadRecord<RAW_TYPE, ID_TYPE>>>;
 }
 
