@@ -58,15 +58,17 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
       this.log.timeLog(logName, 'Load started', logName, full ? 'full' : 'delta', threshold, new Date());
 
       this.log.timeLog(logName, 'Loading updated');
+      const updatedStart = new Date();
       const updated: ProcessBatchResults = { modified: 0, records: 0 };
       const updateIterator = await (full ? this.querySourceFull(this.config.updateLimit) : await this.querySourceDelta(this.config.updateLimit, threshold));
-      await this.processBatch(updateIterator, updated);
+      await this.processBatch(updateIterator, updatedStart, updated);
       this.log.timeLog(logName, 'Updated Results', updated);
 
       this.log.timeLog(logName, 'Refresh outdated');
+      const outdatedStart = new Date();
       const outdated: ProcessBatchResults = { modified: 0, records: 0 };
       const outdatedIterator = await this.queryOutdated(this.config.outdatedLimit);
-      await this.processBatch(outdatedIterator, outdated);
+      await this.processBatch(outdatedIterator, outdatedStart, outdated);
       this.log.timeLog(logName, 'Outdated Results', outdated);
 
       let rawTrimResults: RawTrimResults = { raw_trim_count: 0 };
@@ -137,7 +139,7 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return qr.rows[0].rv as Date | undefined;
   }
 
-  protected async processBatch(dataIterator: AsyncIterable<SOURCE_TYPE>, counts?: ProcessBatchResults): Promise<void> {
+  protected async processBatch(dataIterator: AsyncIterable<SOURCE_TYPE>, defaultFetchDate: Date, counts?: ProcessBatchResults): Promise<void> {
     counts ??= { modified: 0, records: 0 };
 
     const logInterval = setInterval(() => {
@@ -146,7 +148,7 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     try {
       // Batch the records
       for await (const batched of batch(dataIterator, this.config.pgBatchSize)) {
-        const updates = await this.transformRecords(batched);
+        const updates = await this.transformRecords(batched, defaultFetchDate);
         const results = await this.revPool.query(
           `CALL ${this.config.typeName}_raw_load($1, $2, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
           [this.config.loadRev, JSON.stringify(updates)]
@@ -250,7 +252,7 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
 
   protected abstract querySourceFull(limit: number): Promise<AsyncIterable<SOURCE_TYPE>>;
   protected abstract queryOutdated(limit: number): Promise<AsyncIterable<SOURCE_TYPE>>;
-  protected abstract transformRecords(data: SOURCE_TYPE[]): Promise<Array<RawLoadRecord<RAW_TYPE, ID_TYPE>>>;
+  protected abstract transformRecords(data: SOURCE_TYPE[], defaultFetchDate: Date): Promise<Array<RawLoadRecord<RAW_TYPE, ID_TYPE>>>;
 }
 
 export default AbstractRevLoader;
