@@ -1,5 +1,5 @@
 import * as NodeStream from 'node:stream';
-import { Readable, Stream, Duplex } from 'node:stream';
+import { Readable, Writable, Stream, Duplex } from 'node:stream';
 import batch from 'it-batch';
 import QueryStream from 'pg-query-stream';
 import pg from 'pg';
@@ -28,7 +28,7 @@ export async function poolStreamQuery(pool: pg.Pool, text: string, values?: any[
   return poolStream(pool, new QueryStream(text, values, config));
 }
 
-export async function withStream<X>(stream: Readable, cb: (stream: Readable) => Promise<X>): Promise<X> {
+export async function withStream<X, Y extends Readable | Writable>(stream: Y, cb: (stream: Y) => Promise<X>): Promise<X> {
   try {
     return await cb(stream);
   } finally {
