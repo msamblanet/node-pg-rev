@@ -1,6 +1,6 @@
 # node-pg-rev - Revision History
 
-- 2022-07-??: v0.1.3
+- 2022-08-01: v0.1.3
   - Fix withStream to allow for Readable and Writable
 
 - 2022-07-25: v0.1.2
