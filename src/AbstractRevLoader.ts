@@ -110,7 +110,7 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
   }
 
   protected async createNewJob(): Promise<NewJobInfo> {
-    const qr = await this.revPool.query("SELECT * FROM rev_create_job();");
+    const qr = await this.revPool.query('SELECT * FROM rev_create_job();');
     const rv = qr.rows[0] as NewJobInfo | undefined;
     if (!rv) {
       throw new Error('rev_next_job did not return a row');
