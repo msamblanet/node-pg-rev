@@ -21,6 +21,11 @@ export interface RevLoaderConfig {
   rawTrim: boolean;
 }
 
+export interface NewJobInfo {
+  job_id: number;
+  job_start: Date;
+}
+
 export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOURCE_TYPE, RAW_TYPE, ID_TYPE> {
   public static DEFAULT_CONFIG: RevLoaderConfig = {
     typeName: '',
@@ -55,22 +60,22 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     try {
       this.log.time(logName);
 
-      const rawTrimThreshold = new Date(); // @todo Can we enhance to use min fetchDate from load instead for more flexibility (such as loading from cached files)
-
       this.log.timeLog(logName, 'Load started', logName, full ? 'full' : 'delta', threshold, new Date());
 
-      this.log.timeLog(logName, 'Loading updated');
-      const updatedStart = new Date();
+      // WARNING - Do not use local times for fetch and other dates - we need to use DB time as they may be
+      // out of sync.  We can use jobStart for almost any of these dates...
+      const { job_id: jobId, job_start: jobStart } = await this.createNewJob();
+
+      this.log.timeLog(logName, 'Loading updated - Job ID / Start:', jobId, jobStart);
       const updated: ProcessBatchResults = { modified: 0, records: 0 };
       const updatedStream = await (full ? this.querySourceFull(this.config.updateLimit) : await this.querySourceDelta(this.config.updateLimit, threshold));
-      await withStream(updatedStream, async updatedStream => this.processBatch(updatedStream, updatedStart, updated));
+      await withStream(updatedStream, async updatedStream => this.processBatch(jobId, updatedStream, jobStart, updated));
       this.log.timeLog(logName, 'Updated Results', updated);
 
       this.log.timeLog(logName, 'Refresh outdated');
-      const outdatedStart = new Date();
       const outdated: ProcessBatchResults = { modified: 0, records: 0 };
       const outdatedStream = await this.queryOutdated(this.config.outdatedLimit);
-      await withStream(outdatedStream, async outdatedStream => this.processBatch(outdatedStream, outdatedStart, outdated));
+      await withStream(outdatedStream, async outdatedStream => this.processBatch(jobId, outdatedStream, jobStart, outdated));
       this.log.timeLog(logName, 'Outdated Results', outdated);
 
       let rawTrimResults: RawTrimResults = { raw_trim_count: 0 };
@@ -82,12 +87,12 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
         this.log.timeLog(logName, 'Trimming Raw SKIPPED - Update was limited');
       } else {
         this.log.timeLog(logName, 'Trimming Raw');
-        rawTrimResults = await this.rawTrim(rawTrimThreshold);
+        rawTrimResults = await this.rawTrim(jobId, jobStart);
         this.log.timeLog(logName, 'Trim Raw Results', rawTrimResults);
       }
 
       this.log.timeLog(logName, 'Loading Rev');
-      const revLoadResults = await this.revLoad();
+      const revLoadResults = await this.revLoad(jobId, jobStart);
       this.log.timeLog(logName, 'Load Rev Results', revLoadResults);
 
       this.log.timeLog(logName, 'Trimming Rev');
@@ -102,6 +107,16 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     } finally {
       this.log.timeEnd(logName);
     }
+  }
+
+  protected async createNewJob(): Promise<NewJobInfo> {
+    const qr = await this.revPool.query("SELECT * FROM rev_create_job();");
+    const rv = qr.rows[0] as NewJobInfo | undefined;
+    if (!rv) {
+      throw new Error('rev_next_job did not return a row');
+    }
+
+    return rv;
   }
 
   protected async queryDefaultSystemId(): Promise<string | undefined> {
@@ -132,8 +147,8 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return qr.rows[0].rv as Date | undefined;
   }
 
-  protected async queryLastUpdateDate(): Promise<Date | undefined> {
-    const qr = await this.revPool.query(`SELECT MAX(update_date) AS rv FROM ${this.config.typeName}_raw;`);
+  protected async queryLastDataUpdateDate(): Promise<Date | undefined> {
+    const qr = await this.revPool.query(`SELECT MAX(data_update_date) AS rv FROM ${this.config.typeName}_raw;`);
     if (qr.rowCount > 1) {
       throw new Error(`Invalid Row Count: ${qr.rowCount}`);
     }
@@ -141,7 +156,16 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return qr.rows[0].rv as Date | undefined;
   }
 
-  protected async processBatch(dataIterator: TypedReadable<SOURCE_TYPE>, defaultFetchDate: Date, counts?: ProcessBatchResults): Promise<void> {
+  protected async queryLastRawUpdateDate(): Promise<Date | undefined> {
+    const qr = await this.revPool.query(`SELECT MAX(raw_update_date) AS rv FROM ${this.config.typeName}_raw;`);
+    if (qr.rowCount > 1) {
+      throw new Error(`Invalid Row Count: ${qr.rowCount}`);
+    }
+
+    return qr.rows[0].rv as Date | undefined;
+  }
+
+  protected async processBatch(jobId: number, dataIterator: TypedReadable<SOURCE_TYPE>, defaultFetchDate: Date, counts?: ProcessBatchResults): Promise<void> {
     counts ??= { modified: 0, records: 0 };
 
     const logInterval = setInterval(() => {
@@ -152,8 +176,8 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
       for await (const batched of batch(dataIterator, this.config.pgBatchSize)) {
         const updates = await this.transformRecords(batched, defaultFetchDate);
         const results = await this.revPool.query(
-          `CALL ${this.config.typeName}_raw_load($1, $2, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
-          [this.config.loadRev, JSON.stringify(updates)]
+          `CALL ${this.config.typeName}_raw_load($1, $2, $3, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
+          [jobId, this.config.loadRev, JSON.stringify(updates)]
         );
 
         const loadResult = results.rows[0].counts as RawLoadResults;
@@ -187,19 +211,19 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return poolStreamQuery(this.revPool, sql);
   }
 
-  protected async rawTrim(startDate: Date): Promise<RawTrimResults> {
+  protected async rawTrim(jobId: number, jobStart: Date): Promise<RawTrimResults> {
     const qr = await this.revPool.query(
-      `CALL ${this.config.typeName}_raw_trim($1, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
-      [startDate]
+      `CALL ${this.config.typeName}_raw_trim($1, $2, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
+      [jobId, jobStart]
     );
 
     return qr.rows[0].counts as RawTrimResults;
   }
 
-  protected async revLoad(deleteMissing = this.config.deleteMissing, refreshCurrentView = this.config.refreshCurrentView): Promise<RevLoadResults> {
+  protected async revLoad(jobId: number, jobStart: Date, deleteMissing = this.config.deleteMissing, refreshCurrentView = this.config.refreshCurrentView): Promise<RevLoadResults> {
     const qr = await this.revPool.query(
-      `CALL ${this.config.typeName}_rev_load($1, $2, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
-      [deleteMissing ? new Date() : null, refreshCurrentView]
+      `CALL ${this.config.typeName}_rev_load($1, $2, $3, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
+      [jobId, deleteMissing ? jobStart : null, refreshCurrentView]
     );
 
     return qr.rows[0].counts as RevLoadResults;
