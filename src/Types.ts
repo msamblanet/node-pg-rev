@@ -30,7 +30,6 @@ export interface RawLoadRecord<PAYLOAD_TYPE, EXT_ID_TYPE> {
   fetch_date: Date | string;
   ext_create_date?: Date | string;
   ext_update_date?: Date | string;
-  update_date?: Date | string;
 }
 
 export interface RawLoadResults {
