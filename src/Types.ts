@@ -55,6 +55,8 @@ export interface RevTrimResults {
 
 //
 // OTHER AbstractRevLoader TYPES
+export type CurrentRefreshResults = Record<string, unknown>;
+
 export interface IdResult<ID_TYPE> {
   id: ID_TYPE;
 }
