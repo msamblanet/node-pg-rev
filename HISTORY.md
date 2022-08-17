@@ -1,5 +1,8 @@
 # node-pg-rev - Revision History
 
+- 2022-08-17: v0.4.1
+  - Remove refresh from load_rev procedure, split out in procedure and in AsbtractRevLoader
+
 - 2022-08-16: v0.4.0
   - Update to work with 0.4.0 generated tables
   - Sync version number

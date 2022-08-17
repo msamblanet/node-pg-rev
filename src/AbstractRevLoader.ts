@@ -3,7 +3,7 @@ import batch from 'it-batch';
 import ms from 'ms';
 import pg from 'pg';
 import { withStream, poolStreamQuery } from './Util.js';
-import { IdResult, ProcessBatchResults, RawLoadRecord, RawLoadResults, RawTrimResults, RevLoadResults, RevTrimResults, UpdatedTrimResults } from './Types.js';
+import { CurrentRefreshResults, IdResult, ProcessBatchResults, RawLoadRecord, RawLoadResults, RawTrimResults, RevLoadResults, RevTrimResults, UpdatedTrimResults } from './Types.js';
 
 export type TypedReadable<X> = Readable; // Add type to Readable for better documentation
 
@@ -95,6 +95,15 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
       const revLoadResults = await this.revLoad(jobId, jobStart);
       this.log.timeLog(logName, 'Load Rev Results', revLoadResults);
 
+      let currentRefreshResults = {};
+      if (this.config.refreshCurrentView) {
+        this.log.timeLog(logName, 'Refresh Current');
+        currentRefreshResults = await this.currentRefresh();
+        this.log.timeLog(logName, 'Refresh Current Results', currentRefreshResults);
+      } else {
+        this.log.timeLog(logName, 'Refresh Current SKIPPED - Disabled by config');
+      }
+
       this.log.timeLog(logName, 'Trimming Rev');
       const revTrimResults = await this.revTrim();
       this.log.timeLog(logName, 'Trim Rev Results', revTrimResults);
@@ -103,7 +112,7 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
       const updatedTrimResults = await this.updatedTrim();
       this.log.timeLog(logName, 'Trim Updated Results', updatedTrimResults);
 
-      this.log.timeLog(logName, 'Load Complete', updated, outdated, rawTrimResults, revLoadResults, revTrimResults, updatedTrimResults);
+      this.log.timeLog(logName, 'Load Complete', updated, outdated, rawTrimResults, revLoadResults, currentRefreshResults, revTrimResults, updatedTrimResults);
     } finally {
       this.log.timeEnd(logName);
     }
@@ -220,13 +229,21 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return qr.rows[0].counts as RawTrimResults;
   }
 
-  protected async revLoad(jobId: number, jobStart: Date, deleteMissing = this.config.deleteMissing, refreshCurrentView = this.config.refreshCurrentView): Promise<RevLoadResults> {
+  protected async revLoad(jobId: number, jobStart: Date, deleteMissing = this.config.deleteMissing): Promise<RevLoadResults> {
     const qr = await this.revPool.query(
-      `CALL ${this.config.typeName}_rev_load($1, $2, $3, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
-      [jobId, deleteMissing ? jobStart : null, refreshCurrentView]
+      `CALL ${this.config.typeName}_rev_load($1, $2, '{}'::JSONB)`, // Older Postgres does not support OUT so we need to use INOUT
+      [jobId, deleteMissing ? jobStart : null]
     );
 
     return qr.rows[0].counts as RevLoadResults;
+  }
+
+  protected async currentRefresh(): Promise<CurrentRefreshResults> {
+    const qr = await this.revPool.query(
+      `CALL ${this.config.typeName}_current_refresh('{}'::JSONB)` // Older Postgres does not support OUT so we need to use INOUT
+    );
+
+    return qr.rows[0].counts as CurrentRefreshResults;
   }
 
   protected async revTrim(revTrimAge = this.config.revTrimAge): Promise<RevTrimResults> {
