@@ -26,14 +26,18 @@ export interface NewJobInfo {
   job_start: Date;
 }
 
-export interface PerormLoadCounts {
-  updatedResults: ProcessBatchResults;
-  outdatedResults: ProcessBatchResults;
-  rawTrimResults: RawTrimResults;
-  revLoadResults: RevLoadResults;
-  currentRefreshResults: CurrentRefreshResults;
-  revTrimResults: RevTrimResults;
-  updatedTrimResults: UpdatedTrimResults;
+export interface PerformLoadMetrics {
+  type: string;
+  jobId?: number;
+  jobStart?: Date;
+  jobEnd?: Date;
+  updatedResults?: ProcessBatchResults;
+  outdatedResults?: ProcessBatchResults;
+  rawTrimResults?: RawTrimResults;
+  revLoadResults?: RevLoadResults;
+  currentRefreshResults?: CurrentRefreshResults;
+  revTrimResults?: RevTrimResults;
+  updatedTrimResults?: UpdatedTrimResults;
 }
 
 export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOURCE_TYPE, RAW_TYPE, ID_TYPE> {
@@ -64,16 +68,10 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     }
   }
 
-  public async performLoad(full = false, threshold?: Date): Promise<PerormLoadCounts> {
+  public async performLoad(full = false, threshold?: Date): Promise<PerformLoadMetrics> {
     const logName = this.config.typeName;
-    const counts: PerormLoadCounts = {
-      updatedResults: { modified: 0, records: 0 },
-      outdatedResults: { modified: 0, records: 0 },
-      rawTrimResults: { raw_trim_count: 0 },
-      revLoadResults: { load_count: 0, missing_deletes_count: 0, backlink_count: 0 },
-      currentRefreshResults: {},
-      revTrimResults: { rev_trim_count: 0 },
-      updatedTrimResults: { updated_trim_count: 0 }
+    const metrics: PerformLoadMetrics = {
+      type: this.config.typeName
     };
 
     try {
@@ -83,56 +81,62 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
 
       // WARNING - Do not use local times for fetch and other dates - we need to use DB time as they may be
       // out of sync.  We can use jobStart for almost any of these dates...
-      const { job_id: jobId, job_start: jobStart } = await this.createNewJob();
+      const jobInfo = await this.createNewJob();
+      metrics.jobId = jobInfo.job_id;
+      metrics.jobStart = jobInfo.job_start;
 
-      this.log.timeLog(logName, 'Loading updated - Job ID / Start:', jobId, jobStart);
+      this.log.timeLog(logName, 'Loading updated:', jobInfo);
       const updatedStream = await (full ? this.querySourceFull(this.config.updateLimit) : await this.querySourceDelta(this.config.updateLimit, threshold));
-      await withStream(updatedStream, async updatedStream => this.processBatch(jobId, updatedStream, jobStart, counts.updatedResults));
-      this.log.timeLog(logName, 'Updated Results', counts.updatedResults);
+      metrics.updatedResults = { modified: 0, records: 0 };
+      await withStream(updatedStream, async updatedStream => this.processBatch(metrics.jobId!, updatedStream, metrics.jobStart!, metrics.updatedResults));
+      this.log.timeLog(logName, 'Updated Results', metrics.updatedResults);
 
       this.log.timeLog(logName, 'Refresh outdated');
       const outdatedStream = await this.queryOutdated(this.config.outdatedLimit);
-      await withStream(outdatedStream, async outdatedStream => this.processBatch(jobId, outdatedStream, jobStart, counts.outdatedResults));
-      this.log.timeLog(logName, 'Outdated Results', counts.outdatedResults);
+      metrics.outdatedResults = { modified: 0, records: 0 };
+      await withStream(outdatedStream, async outdatedStream => this.processBatch(metrics.jobId!, outdatedStream, metrics.jobStart!, metrics.outdatedResults));
+      this.log.timeLog(logName, 'Outdated Results', metrics.outdatedResults);
 
       if (!full) {
         this.log.timeLog(logName, 'Trimming Raw SKIPPED - Requires full load');
       } else if (!this.config.rawTrim) {
         this.log.timeLog(logName, 'Trimming Raw SKIPPED - Disabled by config');
-      } else if (counts.updatedResults.records >= this.config.updateLimit) {
+      } else if (metrics.updatedResults.records >= this.config.updateLimit) {
         this.log.timeLog(logName, 'Trimming Raw SKIPPED - Update was limited');
       } else {
         this.log.timeLog(logName, 'Trimming Raw');
-        counts.rawTrimResults = await this.rawTrim(jobId, jobStart);
-        this.log.timeLog(logName, 'Trim Raw Results', counts.rawTrimResults);
+        metrics.rawTrimResults = await this.rawTrim(metrics.jobId, metrics.jobStart);
+        this.log.timeLog(logName, 'Trim Raw Results', metrics.rawTrimResults);
       }
 
       this.log.timeLog(logName, 'Loading Rev');
-      counts.revLoadResults = await this.revLoad(jobId, jobStart);
-      this.log.timeLog(logName, 'Load Rev Results', counts.revLoadResults);
+      metrics.revLoadResults = await this.revLoad(metrics.jobId, metrics.jobStart);
+      this.log.timeLog(logName, 'Load Rev Results', metrics.revLoadResults);
 
       if (this.config.refreshCurrentView) {
         this.log.timeLog(logName, 'Refresh Current');
-        counts.currentRefreshResults = await this.currentRefresh();
-        this.log.timeLog(logName, 'Refresh Current Results', counts.currentRefreshResults);
+        metrics.currentRefreshResults = await this.currentRefresh();
+        this.log.timeLog(logName, 'Refresh Current Results', metrics.currentRefreshResults);
       } else {
         this.log.timeLog(logName, 'Refresh Current SKIPPED - Disabled by config');
       }
 
       this.log.timeLog(logName, 'Trimming Rev');
-      counts.revTrimResults = await this.revTrim();
-      this.log.timeLog(logName, 'Trim Rev Results', counts.revTrimResults);
+      metrics.revTrimResults = await this.revTrim();
+      this.log.timeLog(logName, 'Trim Rev Results', metrics.revTrimResults);
 
       this.log.timeLog(logName, 'Trimming Updated');
-      counts.updatedTrimResults = await this.updatedTrim();
-      this.log.timeLog(logName, 'Trim Updated Results', counts.updatedTrimResults);
+      metrics.updatedTrimResults = await this.updatedTrim();
+      this.log.timeLog(logName, 'Trim Updated Results', metrics.updatedTrimResults);
 
-      this.log.timeLog(logName, 'Load Complete', counts);
+      metrics.jobEnd = await this.queryServerTime();
+
+      this.log.timeLog(logName, 'Load Complete', metrics);
     } finally {
       this.log.timeEnd(logName);
     }
 
-    return counts;
+    return metrics;
   }
 
   protected async createNewJob(): Promise<NewJobInfo> {
@@ -145,7 +149,17 @@ export abstract class AbstractRevLoader<CONFIG_TYPE extends RevLoaderConfig, SOU
     return rv;
   }
 
-  protected async queryDefaultSystemId(): Promise<string | undefined> {
+  protected async queryServerTime(): Promise<Date> {
+    const qr = await this.revPool.query('SELECT CURRENT_TIMESTAMP AS rv;');
+    const rv = qr.rows[0]?.rv as Date | undefined;
+    if (!rv) {
+      throw new Error('CURRENT_TIMESTAMP not found');
+    }
+
+    return rv;
+  }
+
+  protected async queryDefaultSystemId(): Promise<string> {
     const qr = await this.revPool.query(`SELECT ${this.config.typeName}_default_source_id() AS rv;`);
     const rv = qr.rows[0]?.rv as string | undefined;
     if (!rv) {
