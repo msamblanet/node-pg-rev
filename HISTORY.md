@@ -1,5 +1,9 @@
 # node-pg-rev - Revision History
 
+- 2022-08-19: v0.4.2
+  - Alter performLoad to return all count objects and job id/dates
+  - Move AbstractTransformLoader into core module
+
 - 2022-08-17: v0.4.1
   - Remove refresh from load_rev procedure, split out in procedure and in AsbtractRevLoader
 
