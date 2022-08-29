@@ -47,7 +47,7 @@
   "devDependencies": {
     "@msamblanet/node-project-template": "^0.7.2",
     "npm-check-updates": "^16.0.5",
-    "xo": "^0.51.0",
+    "xo": "^0.52.2",
     "depcheck": "^1.4.3",
     "@types/ms": "^0.7.31",
     "@types/pg": "^8.6.5"
